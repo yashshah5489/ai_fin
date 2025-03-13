@@ -1,20 +1,27 @@
+"""
+API routes for user management.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
 from passlib.context import CryptContext
-from ..database.database import get_db
-from ..models.models import User
-from ..schemas.schemas import UserCreate, UserResponse, UserUpdate
+from typing import List
 
+from ..schemas.schemas import UserCreate, UserResponse, UserUpdate
+from ..models.models import User
+from ..database.database import get_db
+
+# Create router
 router = APIRouter()
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_password_hash(password: str):
+    """Generate password hash."""
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str):
+    """Verify password against hash."""
     return pwd_context.verify(plain_password, hashed_password)
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -22,7 +29,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     """
     Create a new user with the given data.
     """
-    # Check if username already exists
+    # Check if username exists
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(
@@ -30,7 +37,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
             detail="Username already registered"
         )
     
-    # Check if email already exists
+    # Check if email exists
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(
@@ -38,7 +45,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
             detail="Email already registered"
         )
     
-    # Create new user with hashed password
+    # Create user object
     hashed_password = get_password_hash(user.password)
     db_user = User(
         username=user.username,
@@ -46,12 +53,14 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         full_name=user.full_name,
         password_hash=hashed_password,
         profile_image=user.profile_image,
-        preferences={"theme": "light", "currency": "INR", "notifications": True}
+        preferences={"theme": "light", "currency": "INR", "notifications": True, "language": "en"}
     )
     
+    # Add to database
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    
     return db_user
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -60,7 +69,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
     Get a specific user by ID.
     """
     db_user = db.query(User).filter(User.id == user_id).first()
-    if db_user is None:
+    if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
@@ -73,17 +82,17 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     Update a user's information.
     """
     db_user = db.query(User).filter(User.id == user_id).first()
-    if db_user is None:
+    if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
     
-    # Update user fields
+    # Update user fields if provided
     if user_update.email is not None:
-        # Check if email already exists (except for current user)
-        existing_email = db.query(User).filter(User.email == user_update.email, User.id != user_id).first()
-        if existing_email:
+        # Check if email exists for another user
+        existing_user = db.query(User).filter(User.email == user_update.email).first()
+        if existing_user and existing_user.id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
@@ -92,16 +101,26 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     
     if user_update.full_name is not None:
         db_user.full_name = user_update.full_name
-    
+        
     if user_update.profile_image is not None:
         db_user.profile_image = user_update.profile_image
-    
+        
     if user_update.preferences is not None:
-        # Merge with existing preferences
-        current_prefs = db_user.preferences or {}
-        current_prefs.update(user_update.preferences.dict(exclude_unset=True))
-        db_user.preferences = current_prefs
+        # Update preferences
+        current_preferences = db_user.preferences or {}
+        updated_preferences = user_update.preferences.dict(exclude_unset=True)
+        current_preferences.update(updated_preferences)
+        db_user.preferences = current_preferences
     
+    # Commit changes
     db.commit()
     db.refresh(db_user)
+    
     return db_user
+
+@router.get("/", response_model=List[UserResponse])
+def get_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """
+    Get all users.
+    """
+    return db.query(User).offset(skip).limit(limit).all()

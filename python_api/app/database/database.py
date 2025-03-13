@@ -1,3 +1,6 @@
+"""
+Database connection and session management for Financial Advisor API.
+"""
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -7,30 +10,28 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Get database URL from environment or use default
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./financial_advisor.db")
+# Get database connection string from environment variable
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable not set")
 
-# Create engine
+# For PostgreSQL, use the following connection string format
+# Other parameters like echo, pool_size etc. can be adjusted as needed
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {}
+    DATABASE_URL,
+    echo=False,  # Set to True to see SQL queries
+    pool_pre_ping=True,  # Verify connections before using them
+    pool_recycle=300,  # Recycle connections after 5 minutes
 )
 
-# Create session factory
+# Create a session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Declarative base for models
+# Base class for all models
 Base = declarative_base()
 
-# For SQLite only - enable foreign key constraints
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-# Session dependency for FastAPI
 def get_db():
+    """Dependency for database sessions."""
     db = SessionLocal()
     try:
         yield db

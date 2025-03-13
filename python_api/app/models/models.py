@@ -1,10 +1,15 @@
+"""
+Database models for Financial Advisor API.
+All models are designed for the Indian context with INR currency.
+"""
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import pytz
+
 from ..database.database import Base
 
-# Set the timezone to Indian Standard Time
+# Define Indian Standard Time timezone
 IST = pytz.timezone('Asia/Kolkata')
 
 class User(Base):

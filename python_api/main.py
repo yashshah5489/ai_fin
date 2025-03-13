@@ -1,10 +1,37 @@
+"""
+Main entry point for the Financial Advisor API.
+"""
 import uvicorn
-from app import app
-from app.database.database import engine
-from app.models import models
+import os
+from dotenv import load_dotenv
 
-# Create tables in the database
-models.Base.metadata.create_all(bind=engine)
+# Load environment variables
+load_dotenv()
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    """
+    Run the FastAPI application with Uvicorn.
+    
+    Uses environment variables:
+    - PORT: The port to run the API on (default: 8000)
+    - HOST: The host to run the API on (default: 0.0.0.0)
+    - DEBUG: Whether to run in debug mode (default: False)
+    """
+    # Get configuration from environment variables
+    port = int(os.environ.get("PORT", 8000))
+    host = os.environ.get("HOST", "0.0.0.0")
+    debug = os.environ.get("DEBUG", "False").lower() == "true"
+    
+    # Print startup message
+    print(f"Starting Financial Advisor API on http://{host}:{port}")
+    print(f"Debug mode: {debug}")
+    print(f"API documentation available at http://{host}:{port}/docs")
+    
+    # Run the application
+    uvicorn.run(
+        "app:app",
+        host=host,
+        port=port,
+        reload=debug,
+        log_level="info" if debug else "error",
+    )
