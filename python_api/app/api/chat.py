@@ -1,18 +1,17 @@
+"""
+API routes for chat messages and AI-powered conversations.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
-import pytz
 
-from ..database.database import get_db
-from ..models.models import ChatMessage, User
 from ..schemas.schemas import ChatMessageCreate, ChatMessageResponse
+from ..models.models import ChatMessage, User
+from ..database.database import get_db
 from ..utils.langchain_utils import generate_chat_response
 
+# Create router
 router = APIRouter()
-
-# Set the timezone to Indian Standard Time
-IST = pytz.timezone('Asia/Kolkata')
 
 @router.post("/", response_model=ChatMessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_chat_message(message: ChatMessageCreate, db: Session = Depends(get_db)):
@@ -27,7 +26,7 @@ async def create_chat_message(message: ChatMessageCreate, db: Session = Depends(
             detail="User not found"
         )
     
-    # Create user message
+    # Create user message in database
     db_message = ChatMessage(
         message=message.message,
         is_user=True,
@@ -39,26 +38,29 @@ async def create_chat_message(message: ChatMessageCreate, db: Session = Depends(
     db.commit()
     db.refresh(db_message)
     
-    # Get recent chat history for context
-    chat_history = (
-        db.query(ChatMessage)
-        .filter(ChatMessage.user_id == message.user_id)
-        .order_by(ChatMessage.timestamp.desc())
-        .limit(10)
+    # Get recent chat history
+    chat_history = db.query(ChatMessage)\
+        .filter(ChatMessage.user_id == message.user_id)\
+        .order_by(ChatMessage.timestamp.desc())\
+        .limit(10)\
         .all()
-    )
+    chat_history.reverse()  # Chronological order
     
-    # Format chat history for the LLM
+    # Format chat history for the AI
     formatted_history = [
-        {"message": msg.message, "is_user": msg.is_user}
-        for msg in reversed(chat_history)
+        {"role": "user" if msg.is_user else "assistant", "content": msg.message}
+        for msg in chat_history
     ]
     
     try:
-        # Generate response using LangChain
-        ai_response = generate_chat_response(message.message, formatted_history)
+        # Generate AI response
+        ai_response = await generate_chat_response(
+            message.message, 
+            formatted_history,
+            related_to=message.related_to
+        )
         
-        # Save AI response
+        # Save AI response to database
         db_ai_message = ChatMessage(
             message=ai_response,
             is_user=False,
@@ -71,21 +73,23 @@ async def create_chat_message(message: ChatMessageCreate, db: Session = Depends(
         db.refresh(db_ai_message)
         
         return db_ai_message
+    
     except Exception as e:
-        # Handle errors in AI response generation
-        error_message = f"Sorry, I couldn't generate a response: {str(e)}"
-        db_error_message = ChatMessage(
+        # If AI response generation fails, return an error message
+        error_message = f"I apologize, but I am unable to respond at the moment. Error: {str(e)}"
+        
+        db_ai_message = ChatMessage(
             message=error_message,
             is_user=False,
             related_to=message.related_to,
             user_id=message.user_id
         )
         
-        db.add(db_error_message)
+        db.add(db_ai_message)
         db.commit()
-        db.refresh(db_error_message)
+        db.refresh(db_ai_message)
         
-        return db_error_message
+        return db_ai_message
 
 @router.get("/user/{user_id}", response_model=List[ChatMessageResponse])
 def get_user_chat_history(
@@ -105,13 +109,10 @@ def get_user_chat_history(
         )
     
     # Get chat messages
-    messages = (
-        db.query(ChatMessage)
-        .filter(ChatMessage.user_id == user_id)
-        .order_by(ChatMessage.timestamp.desc())
-        .limit(limit)
+    messages = db.query(ChatMessage)\
+        .filter(ChatMessage.user_id == user_id)\
+        .order_by(ChatMessage.timestamp.desc())\
+        .limit(limit)\
         .all()
-    )
     
-    # Return in chronological order
-    return list(reversed(messages))
+    return messages

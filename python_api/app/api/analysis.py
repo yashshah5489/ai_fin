@@ -1,13 +1,16 @@
+"""
+API routes for document analysis using AI.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Dict, Any
 
-from ..database.database import get_db
+from ..schemas.schemas import AnalysisRequest, AnalysisResponse
 from ..models.models import Document, User
-from ..schemas.schemas import AnalysisRequest, AnalysisResponse, DocumentAnalysis
+from ..database.database import get_db
 from ..utils.langchain_utils import analyze_financial_document
-from ..utils.pdf_utils import extract_pdf_content
 
+# Create router
 router = APIRouter()
 
 @router.post("/investment", response_model=AnalysisResponse)
@@ -35,70 +38,58 @@ async def analyze_document(request: AnalysisRequest, analysis_type: str, db: Ses
     """
     Common function to analyze documents.
     """
-    # Check if user exists
-    db_user = db.query(User).filter(User.id == request.user_id).first()
-    if not db_user:
+    # Check if document exists
+    document = db.query(Document).filter(Document.id == request.document_id).first()
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    # Check if user exists and has access to the document
+    user = db.query(User).filter(User.id == request.user_id).first()
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
     
-    # Check if document exists and belongs to user
-    db_document = db.query(Document).filter(
-        Document.id == request.document_id,
-        Document.user_id == request.user_id
-    ).first()
-    
-    if not db_document:
+    if document.user_id != request.user_id:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found or does not belong to user"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User does not have access to this document"
         )
     
-    # Extract document content
-    if not db_document.content_base64:
+    # Check if document has content
+    if not document.content_base64:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Document has no content"
+            detail="Document has no content to analyze"
         )
     
     try:
-        # Extract text content from PDF
-        pdf_content = extract_pdf_content(db_document.content_base64)
-        document_text = pdf_content["text"]
+        # Extract text content from the document
+        from ..utils.pdf_utils import extract_pdf_content
+        extracted_content = extract_pdf_content(document.content_base64)
+        document_text = extracted_content["text"]
         
-        if not document_text:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not extract text from document"
-            )
+        # Analyze document
+        analysis_result = await analyze_financial_document(document_text, analysis_type)
         
-        # Analyze document using LangChain
-        analysis_result = analyze_financial_document(document_text, analysis_type)
-        
-        # Update document with analysis results
-        db_document.analysis = {
-            "summary": analysis_result["summary"],
-            "insights": analysis_result["insights"],
-            "recommendations": analysis_result["recommendations"]
-        }
-        
+        # Update document with analysis
+        document.analysis = analysis_result
         db.commit()
         
         return {
             "success": True,
-            "analysis": DocumentAnalysis(
-                summary=analysis_result["summary"],
-                insights=analysis_result["insights"],
-                recommendations=analysis_result["recommendations"]
-            )
+            "analysis": analysis_result
         }
+    
     except Exception as e:
-        # Log the error
-        print(f"Error analyzing document: {str(e)}")
-        
-        # Return error response
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error analyzing document: {str(e)}"
-        )
+        # Log error and return failure
+        error_message = str(e)
+        return {
+            "success": False,
+            "analysis": None,
+            "error": error_message
+        }
